@@ -1,4 +1,3 @@
-```markdown
 # Fuzzy Incomplete Bipolar Argumentation Framework (FIBAF)
 
 An Answer Set Programming (ASP) implementation to find consistent covers in a Fuzzy Incomplete Bipolar Argumentation Framework (FIBAF) using `clingo`.
@@ -8,7 +7,7 @@ An Answer Set Programming (ASP) implementation to find consistent covers in a Fu
 Install the `clingo` solver (e.g., via Conda):
 ```bash
 conda install -c potassco clingo
-```
+
 
 ## File Structure
 
