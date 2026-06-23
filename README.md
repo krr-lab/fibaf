@@ -32,4 +32,3 @@ clingo rule.lp example.lp 0
 The solver outputs the valid assignments under the following predicates:
 *   `consistent_argument_status(Node, Value)`: The credibility value of non-leaf nodes.
 *   `leaf_argument_status(Node, Value)`: The credibility value of leaf nodes.
-```
