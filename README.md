@@ -7,7 +7,7 @@ An Answer Set Programming (ASP) implementation to find consistent covers in a Fu
 Install the `clingo` solver (e.g., via Conda):
 ```bash
 conda install -c potassco clingo
-
+```
 
 ## File Structure
 
