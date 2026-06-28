@@ -5,6 +5,7 @@ import os
 import matplotlib.pyplot as plt
 import matplotlib
 import matplotlib.ticker as ticker
+from matplotlib.ticker import ScalarFormatter
 
 # --- Configuration Constants ---
 VALUES = ["LS", "L", "VL", "AC", "C"]
@@ -14,25 +15,27 @@ DATA_FILE_PATH = os.path.join("figures", "performance_data.txt")
 
 # Enumeration Mode (Finding ALL models)
 SCALES_ENUM = [10, 15, 20]
-RATIOS_ENUM = [0.6, 0.8, 0.9]
-ITERATIONS_ENUM = 10  # Run 10 times to get stable average for small scales
+RATIOS_ENUM = [0.5, 0.6, 0.7] # Lowered max ratio to 0.7 to avoid over-constraining
+ITERATIONS_ENUM = 10  
 
 # Scalability Mode (Finding ONE model)
 SCALES_SCAL = [100, 500, 1000, 5000, 10000]
-RATIOS_SCAL = [0.1, 0.5, 0.9]
-ITERATIONS_SCAL = 5   # Run 5 times to get stable average for large scales
+RATIOS_SCAL = [0.3, 0.5, 0.7] # Lowered max ratio to 0.7 to avoid over-constraining
+ITERATIONS_SCAL = 5   
 
 
 def generate_instance(num_nodes_edges: int, known_node_ratio: float, known_edge_ratio: float) -> str:
     """
-    Generates a random argumentation framework based on the exact ratio provided.
+    Generates a random argumentation framework. 
+    Prioritizes assigning known values to leaf nodes and their outgoing edges 
+    to dramatically increase the chance of generating satisfiable (SAT) instances,
+    while strictly maintaining the specified known ratios.
     """
     facts = []
     facts.append(f"node(1..{num_nodes_edges}).")
     facts.append("")
 
-    # 1. Generate Edges
-    num_known_edges = int(num_nodes_edges * known_edge_ratio)
+    # 1. Generate Directed Edges
     generated_edges = set()
     while len(generated_edges) < num_nodes_edges:
         from_node = random.randint(1, num_nodes_edges)
@@ -41,39 +44,56 @@ def generate_instance(num_nodes_edges: int, known_node_ratio: float, known_edge_
             generated_edges.add((from_node, to_node))
 
     edge_list = list(generated_edges)
-    random.shuffle(edge_list)
+    
+    # Identify leaf nodes (nodes with in-degree == 0)
+    has_incoming = set(to_node for from_node, to_node in edge_list)
+    all_nodes = set(range(1, num_nodes_edges + 1))
+    
+    leaf_nodes = list(all_nodes - has_incoming)
+    non_leaf_nodes = list(all_nodes & has_incoming)
+    
+    random.shuffle(leaf_nodes)
+    random.shuffle(non_leaf_nodes)
+    
+    # 2. Assign Known Nodes (Prioritize leaf nodes)
+    # This guarantees exactly 'num_known_nodes' are selected.
+    num_known_nodes = int(num_nodes_edges * known_node_ratio)
+    prioritized_nodes = leaf_nodes + non_leaf_nodes
+    known_nodes = prioritized_nodes[:num_known_nodes]
+    
+    if known_nodes:
+        facts.append("% A_init (Prioritized Leaf Nodes)")
+        for node_id in known_nodes:
+            credibility_value = random.choice(VALUES)
+            facts.append(f'user_assigned({node_id}). credibility({node_id}, "{credibility_value}").')
+        facts.append("")
 
-    known_edges = edge_list[:num_known_edges]
-    unknown_edges = edge_list[num_known_edges:]
+    # 3. Assign Known Edges (Prioritize edges outgoing from leaf nodes)
+    related_edges = [(u, v) for u, v in edge_list if u in leaf_nodes]
+    other_edges = [(u, v) for u, v in edge_list if u not in leaf_nodes]
+    
+    random.shuffle(related_edges)
+    random.shuffle(other_edges)
+    
+    # This guarantees exactly 'num_known_edges' are selected.
+    num_known_edges = int(num_nodes_edges * known_edge_ratio)
+    prioritized_edges = related_edges + other_edges
+    known_edges = prioritized_edges[:num_known_edges]
+    unknown_edges = prioritized_edges[num_known_edges:]
 
-    # Assign known edges
     if known_edges:
-        facts.append("% R_init")
+        facts.append("% R_init (Prioritized Related Edges)")
         for from_node, to_node in known_edges:
             edge_type = random.choice(EDGE_TYPES)
             relevance_value = random.choice(VALUES)
             facts.append(f'edge({from_node}, {to_node}, {edge_type}, "{relevance_value}").')
         facts.append("")
 
-    # Assign unknown edges
     if unknown_edges:
         facts.append("% unknown_edge")
         for from_node, to_node in unknown_edges:
             edge_type = random.choice(EDGE_TYPES)
             facts.append(f'unknown_edge({from_node}, {to_node}, {edge_type}).')
-        facts.append("")
-
-    # 2. Generate Nodes (Strictly enforcing the ratio on ALL nodes)
-    num_known_nodes = int(num_nodes_edges * known_node_ratio)
-    all_nodes = list(range(1, num_nodes_edges + 1))
-    
-    if num_known_nodes > 0:
-        # We sample strictly num_known_nodes from all available nodes
-        known_nodes = random.sample(all_nodes, num_known_nodes)
-        facts.append("% A_init")
-        for node_id in known_nodes:
-            credibility_value = random.choice(VALUES)
-            facts.append(f'user_assigned({node_id}). credibility({node_id}, "{credibility_value}").')
         facts.append("")
 
     return "\n".join(facts)
@@ -125,7 +145,6 @@ def run_experiment_pipeline(scales, ratios, mode, iterations):
         for scale in scales:
             times = []
             models = []
-            # Run multiple times to average out random graph topology variations
             for i in range(iterations):
                 t_ms, m_count = run_single_test(scale, ratio, mode)
                 times.append(t_ms)
@@ -135,16 +154,14 @@ def run_experiment_pipeline(scales, ratios, mode, iterations):
             avg_models = sum(models) / iterations
             avg_results[ratio].append(avg_time)
             
-            print(f"  [{mode}] Scale: {scale:<5} | Ratio: {ratio:.1f} | Avg Models: {avg_models:<5.1f} | Avg Time: {avg_time:.2f} ms")
+            print(f"  [{mode}] Scale: {scale:<5} | Ratio: {ratio:.1f} | Avg Models: {avg_models:<6.1f} | Avg Time: {avg_time:.2f} ms")
             
     return avg_results
 
 
 
 def save_all_data_to_file(results_enum, results_scal, filepath):
-    """
-    Saves the averaged experimental data to a text file.
-    """
+    """Saves the averaged experimental data to a text file."""
     os.makedirs(os.path.dirname(filepath), exist_ok=True)
     
     with open(filepath, "w", encoding="utf-8") as f:
@@ -169,19 +186,13 @@ def save_all_data_to_file(results_enum, results_scal, filepath):
         for i, scale in enumerate(SCALES_SCAL):
             row = f"{scale:<12} | " + " | ".join([f"{results_scal[r][i]:<10.3f}" for r in RATIOS_SCAL]) + "\n"
             f.write(row)
-            
-        f.write("\n======================= Raw Dictionary Format =======================\n\n")
-        f.write(f"results_enum = {results_enum}\n\n")
-        f.write(f"results_scal = {results_scal}\n")
         
     print(f"\nAll averaged experimental data successfully logged to '{filepath}'")
 
 
 
 def plot_academic_figures(results_enum, results_scal):
-    """
-    Plots academic figures based on averaged data.
-    """
+    """Plots academic figures based on averaged data."""
     print("\n===== Plotting Academic Figures =====")
     matplotlib.use('Agg')
     
@@ -201,6 +212,10 @@ def plot_academic_figures(results_enum, results_scal):
         ('^-', '#2ca02c'),  
     ]
 
+    # Create a plain formatter to avoid scientific notation (e.g., no 10^3)
+    plain_formatter = ScalarFormatter(useOffset=False, useMathText=False)
+    plain_formatter.set_scientific(False)
+
     def draw_enum_subplot(ax):
         ratios = sorted(results_enum.keys())
         for idx, ratio in enumerate(ratios):
@@ -208,12 +223,12 @@ def plot_academic_figures(results_enum, results_scal):
             ax.plot(SCALES_ENUM, results_enum[ratio], style, color=color, 
                     markersize=5, linewidth=1.1, label=f'Known Ratio = {ratio}')
         
+        # Linear scale for enumeration mode since scales are small
         ax.set_xscale('linear')
         ax.set_xticks(SCALES_ENUM)
         ax.set_xticklabels([str(s) for s in SCALES_ENUM])
         
-        ax.set_yscale('log')
-        ax.yaxis.set_major_formatter(ticker.FormatStrFormatter('%g'))
+        ax.set_yscale('linear') # Use linear scale to avoid scientific notation
         
         ax.set_xlabel('Number of Arguments/Relations')
         ax.set_ylabel('Average Total Runtime (ms)')
@@ -228,12 +243,13 @@ def plot_academic_figures(results_enum, results_scal):
             ax.plot(SCALES_SCAL, results_scal[ratio], style, color=color, 
                     markersize=5, linewidth=1.1, label=f'Known Ratio = {ratio}')
         
+        # Log scale for large graphs, but disable scientific notation
         ax.set_xscale('log')
         ax.set_xticks(SCALES_SCAL)
-        ax.get_xaxis().set_major_formatter(ticker.FormatStrFormatter('%g'))
+        ax.xaxis.set_major_formatter(plain_formatter)
         
         ax.set_yscale('log')
-        ax.yaxis.set_major_formatter(ticker.FormatStrFormatter('%g'))
+        ax.yaxis.set_major_formatter(plain_formatter)
         
         ax.set_xlabel('Number of Arguments/Relations')
         ax.set_ylabel('Average Total Runtime (ms)')
@@ -241,7 +257,6 @@ def plot_academic_figures(results_enum, results_scal):
         ax.grid(True, which='both', linestyle='--', linewidth=0.5, alpha=0.5)
         ax.legend(loc='upper left', framealpha=0.9)
 
-   
     # Combined plot
     fig_combined, (ax1, ax2) = plt.subplots(1, 2, figsize=(7.2, 2.8)) 
     draw_enum_subplot(ax1)
