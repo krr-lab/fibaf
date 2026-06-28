@@ -55,7 +55,7 @@ clingo example.lp 1
 ### Run Performance Experiment
 Execute the full experimental pipeline to generate runtime statistics and plots:
 ```bash
-python performance_benchmark.py
+python experiment.py
 ```
 All numerical results and high-resolution figures will be saved to the `figures/` directory.
 
