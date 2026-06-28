@@ -18,13 +18,13 @@ conda install -c potassco clingo
 
 To find all consistent covers (all answer sets):
 ```bash
-clingo example.lp 0
+clingo example.lp 0 --project
 ```
 
 
 If `example.lp` does not contain the `#include "rule.lp"` directive, run both files together:
 ```bash
-clingo rule.lp example.lp 0
+clingo rule.lp example.lp 0 --project
 ```
 
 ## Output Interpretation
