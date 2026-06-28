@@ -6,28 +6,32 @@ import matplotlib.pyplot as plt
 import matplotlib
 import matplotlib.ticker as ticker
 
-
+# --- Configuration Constants ---
 VALUES = ["LS", "L", "VL", "AC", "C"]
 EDGE_TYPES = ["support", "attack"]
 RULE_FILE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "rule.lp")
 DATA_FILE_PATH = os.path.join("figures", "performance_data.txt")
 
-# Enumeration Mode 
+# Enumeration Mode (Finding ALL models)
 SCALES_ENUM = [10, 15, 20]
 RATIOS_ENUM = [0.6, 0.8, 0.9]
+ITERATIONS_ENUM = 10  # Run 10 times to get stable average for small scales
 
-# Scalability Mode
+# Scalability Mode (Finding ONE model)
 SCALES_SCAL = [100, 500, 1000, 5000, 10000]
 RATIOS_SCAL = [0.1, 0.5, 0.9]
-
+ITERATIONS_SCAL = 5   # Run 5 times to get stable average for large scales
 
 
 def generate_instance(num_nodes_edges: int, known_node_ratio: float, known_edge_ratio: float) -> str:
-    """generate_instance"""
+    """
+    Generates a random argumentation framework based on the exact ratio provided.
+    """
     facts = []
     facts.append(f"node(1..{num_nodes_edges}).")
     facts.append("")
 
+    # 1. Generate Edges
     num_known_edges = int(num_nodes_edges * known_edge_ratio)
     generated_edges = set()
     while len(generated_edges) < num_nodes_edges:
@@ -42,6 +46,7 @@ def generate_instance(num_nodes_edges: int, known_node_ratio: float, known_edge_
     known_edges = edge_list[:num_known_edges]
     unknown_edges = edge_list[num_known_edges:]
 
+    # Assign known edges
     if known_edges:
         facts.append("% R_init")
         for from_node, to_node in known_edges:
@@ -50,6 +55,7 @@ def generate_instance(num_nodes_edges: int, known_node_ratio: float, known_edge_
             facts.append(f'edge({from_node}, {to_node}, {edge_type}, "{relevance_value}").')
         facts.append("")
 
+    # Assign unknown edges
     if unknown_edges:
         facts.append("% unknown_edge")
         for from_node, to_node in unknown_edges:
@@ -57,17 +63,13 @@ def generate_instance(num_nodes_edges: int, known_node_ratio: float, known_edge_
             facts.append(f'unknown_edge({from_node}, {to_node}, {edge_type}).')
         facts.append("")
 
-    
-    has_incoming = set(to_node for from_node, to_node in edge_list)
-    all_nodes = set(range(1, num_nodes_edges + 1))
-    leaf_nodes = list(all_nodes - has_incoming)
-
-    
+    # 2. Generate Nodes (Strictly enforcing the ratio on ALL nodes)
     num_known_nodes = int(num_nodes_edges * known_node_ratio)
-    num_to_select = min(num_known_nodes, len(leaf_nodes))
-
-    if num_to_select > 0 and len(leaf_nodes) > 0:
-        known_nodes = random.sample(leaf_nodes, num_to_select)
+    all_nodes = list(range(1, num_nodes_edges + 1))
+    
+    if num_known_nodes > 0:
+        # We sample strictly num_known_nodes from all available nodes
+        known_nodes = random.sample(all_nodes, num_known_nodes)
         facts.append("% A_init")
         for node_id in known_nodes:
             credibility_value = random.choice(VALUES)
@@ -78,24 +80,25 @@ def generate_instance(num_nodes_edges: int, known_node_ratio: float, known_edge_
 
 
 
-def run_single_test(num_nodes_edges: int, known_ratio: float, mode: str) -> float:
-    """run_single_test"""
+def run_single_test(num_nodes_edges: int, known_ratio: float, mode: str) -> tuple:
+    """
+    Runs a single grounding and solving process. 
+    Returns: (total_time_ms, number_of_models)
+    """
     instance_facts = generate_instance(num_nodes_edges, known_ratio, known_ratio)
     
-    
     if mode == "ENUMERATION":
-        ctl = clingo.Control(["0", "--project"])  
+        ctl = clingo.Control(["0", "--project"])  # Find all models
     else:
-        ctl = clingo.Control(["1"])  
+        ctl = clingo.Control(["1"])  # Find one model
     
     try:
         ctl.load(RULE_FILE_PATH)
     except FileNotFoundError:
         print(f"Error: Rule file not found at '{RULE_FILE_PATH}'.")
-        return 0.0
+        return 0.0, 0
 
     ctl.add("base", [], instance_facts)
-    
     
     model_count = [0]
     def on_model(m):
@@ -107,24 +110,41 @@ def run_single_test(num_nodes_edges: int, known_ratio: float, mode: str) -> floa
     end_time = time.perf_counter()
     
     total_time_ms = (end_time - start_time) * 1000
-    print(f"  [{mode}] Scale: {num_nodes_edges:<5} | Ratio: {known_ratio:.1f} | Models: {model_count[0]:<5} | Time: {total_time_ms:.2f} ms")
-    return total_time_ms
+    return total_time_ms, model_count[0]
 
 
-def run_experiment_pipeline(scales, ratios, mode):
-    """run_experiment_pipeline"""
-    print(f"\n===== Running Pipeline: {mode} =====")
-    results = {ratio: [] for ratio in ratios}
+
+def run_experiment_pipeline(scales, ratios, mode, iterations):
+    """
+    Runs the pipeline across scales and ratios, averaging results over N iterations.
+    """
+    print(f"\n===== Running Pipeline: {mode} (Averaging over {iterations} runs) =====")
+    avg_results = {ratio: [] for ratio in ratios}
+    
     for ratio in ratios:
         for scale in scales:
-            time_ms = run_single_test(scale, ratio, mode)
-            results[ratio].append(time_ms)
-    return results
+            times = []
+            models = []
+            # Run multiple times to average out random graph topology variations
+            for i in range(iterations):
+                t_ms, m_count = run_single_test(scale, ratio, mode)
+                times.append(t_ms)
+                models.append(m_count)
+            
+            avg_time = sum(times) / iterations
+            avg_models = sum(models) / iterations
+            avg_results[ratio].append(avg_time)
+            
+            print(f"  [{mode}] Scale: {scale:<5} | Ratio: {ratio:.1f} | Avg Models: {avg_models:<5.1f} | Avg Time: {avg_time:.2f} ms")
+            
+    return avg_results
 
 
 
 def save_all_data_to_file(results_enum, results_scal, filepath):
-    """save_all_data_to_file"""
+    """
+    Saves the averaged experimental data to a text file.
+    """
     os.makedirs(os.path.dirname(filepath), exist_ok=True)
     
     with open(filepath, "w", encoding="utf-8") as f:
@@ -132,8 +152,7 @@ def save_all_data_to_file(results_enum, results_scal, filepath):
         f.write("                 FIBAF Performance Evaluation Results                   \n")
         f.write("========================================================================\n\n")
         
-        
-        f.write("[1. Enumeration Mode (Finding ALL Models - Small Scale)]\n")
+        f.write(f"[1. Enumeration Mode (Finding ALL Models, Avg of {ITERATIONS_ENUM} runs)]\n")
         header_enum = f"{'Scale':<12} | " + " | ".join([f"Ratio={r:<10}" for r in RATIOS_ENUM]) + "\n"
         f.write(header_enum)
         f.write("-" * (15 + len(RATIOS_ENUM) * 15) + "\n")
@@ -143,8 +162,7 @@ def save_all_data_to_file(results_enum, results_scal, filepath):
             
         f.write("\n" + "="*72 + "\n\n")
         
-        
-        f.write("[2. Scalability Mode (Finding ONE Model - Large Scale)]\n")
+        f.write(f"[2. Scalability Mode (Finding ONE Model, Avg of {ITERATIONS_SCAL} runs)]\n")
         header_scal = f"{'Scale':<12} | " + " | ".join([f"Ratio={r:<10}" for r in RATIOS_SCAL]) + "\n"
         f.write(header_scal)
         f.write("-" * (15 + len(RATIOS_SCAL) * 15) + "\n")
@@ -156,15 +174,16 @@ def save_all_data_to_file(results_enum, results_scal, filepath):
         f.write(f"results_enum = {results_enum}\n\n")
         f.write(f"results_scal = {results_scal}\n")
         
-    print(f"\nAll experimental data successfully logged to '{filepath}'")
+    print(f"\nAll averaged experimental data successfully logged to '{filepath}'")
 
 
 
 def plot_academic_figures(results_enum, results_scal):
-    """plot_academic_figures"""
+    """
+    Plots academic figures based on averaged data.
+    """
     print("\n===== Plotting Academic Figures =====")
     matplotlib.use('Agg')
-    
     
     plt.rcParams.update({
         'font.family': 'serif',
@@ -182,7 +201,6 @@ def plot_academic_figures(results_enum, results_scal):
         ('^-', '#2ca02c'),  
     ]
 
-    
     def draw_enum_subplot(ax):
         ratios = sorted(results_enum.keys())
         for idx, ratio in enumerate(ratios):
@@ -190,29 +208,25 @@ def plot_academic_figures(results_enum, results_scal):
             ax.plot(SCALES_ENUM, results_enum[ratio], style, color=color, 
                     markersize=5, linewidth=1.1, label=f'Known Ratio = {ratio}')
         
-        
         ax.set_xscale('linear')
         ax.set_xticks(SCALES_ENUM)
         ax.set_xticklabels([str(s) for s in SCALES_ENUM])
-        
         
         ax.set_yscale('log')
         ax.yaxis.set_major_formatter(ticker.FormatStrFormatter('%g'))
         
         ax.set_xlabel('Number of Arguments/Relations')
-        ax.set_ylabel('Total Runtime (ms)')
+        ax.set_ylabel('Average Total Runtime (ms)')
         ax.set_title('(a) Enumeration Mode (ALL Models)', fontsize=10, pad=8)
         ax.grid(True, which='both', linestyle='--', linewidth=0.5, alpha=0.5)
         ax.legend(loc='upper left', framealpha=0.9)
 
-    
     def draw_scal_subplot(ax):
         ratios = sorted(results_scal.keys())
         for idx, ratio in enumerate(ratios):
             style, color = styles[idx % len(styles)]
             ax.plot(SCALES_SCAL, results_scal[ratio], style, color=color, 
                     markersize=5, linewidth=1.1, label=f'Known Ratio = {ratio}')
-        
         
         ax.set_xscale('log')
         ax.set_xticks(SCALES_SCAL)
@@ -222,50 +236,58 @@ def plot_academic_figures(results_enum, results_scal):
         ax.yaxis.set_major_formatter(ticker.FormatStrFormatter('%g'))
         
         ax.set_xlabel('Number of Arguments/Relations')
-        ax.set_ylabel('Total Runtime (ms)')
+        ax.set_ylabel('Average Total Runtime (ms)')
         ax.set_title('(b) Scalability Mode (ONE Model)', fontsize=10, pad=8)
         ax.grid(True, which='both', linestyle='--', linewidth=0.5, alpha=0.5)
         ax.legend(loc='upper left', framealpha=0.9)
 
    
+    # Combined plot
     fig_combined, (ax1, ax2) = plt.subplots(1, 2, figsize=(7.2, 2.8)) 
     draw_enum_subplot(ax1)
     draw_scal_subplot(ax2)
     plt.tight_layout(pad=0.4)
     fig_combined.savefig('figures/performance_combined.pdf', bbox_inches='tight', pad_inches=0.02)
-    fig_combined.savefig('figures/performance_combined.png', bbox_inches='tight', pad_inches=0.02, dpi=300)
+    fig_combined.savefig('figures/performance_combined.png', bbox_inches='tight', pad_inches=0.02)
 
-   
+    # Separate plot A
     fig_a, ax_a = plt.subplots(figsize=(3.6, 2.7))
     draw_enum_subplot(ax_a)
     ax_a.set_title('') 
     plt.tight_layout(pad=0.3)
     fig_a.savefig('figures/performance_enumeration.pdf', bbox_inches='tight', pad_inches=0.02)
-    fig_a.savefig('figures/performance_enumeration.png', bbox_inches='tight', pad_inches=0.02, dpi=300)
+    fig_a.savefig('figures/performance_enumeration.png', bbox_inches='tight', pad_inches=0.02)
 
-    
+    # Separate plot B
     fig_b, ax_b = plt.subplots(figsize=(3.6, 2.7))
     draw_scal_subplot(ax_b)
     ax_b.set_title('')
     plt.tight_layout(pad=0.3)
     fig_b.savefig('figures/performance_scalability.pdf', bbox_inches='tight', pad_inches=0.02)
-    fig_b.savefig('figures/performance_scalability.png', bbox_inches='tight', pad_inches=0.02, dpi=300)
+    fig_b.savefig('figures/performance_scalability.png', bbox_inches='tight', pad_inches=0.02)
 
     print("Success: Generated PDF/PNG plots in 'figures/' directory.")
 
 
 
 if __name__ == "__main__":
+    # --- CRITICAL: Set random seed for scientific reproducibility ---
+    random.seed(42)  
+    
     print("==========================================================")
     print("      FIBAF Pipeline Experiment: One-Click Execution      ")
     print("==========================================================")
     
-    results_enumeration = run_experiment_pipeline(SCALES_ENUM, RATIOS_ENUM, "ENUMERATION")
+    # 1. Run Enumeration Experiment (Averaging over 10 iterations)
+    results_enumeration = run_experiment_pipeline(SCALES_ENUM, RATIOS_ENUM, "ENUMERATION", ITERATIONS_ENUM)
     
-    results_scalability = run_experiment_pipeline(SCALES_SCAL, RATIOS_SCAL, "SCALABILITY")
+    # 2. Run Scalability Experiment (Averaging over 5 iterations)
+    results_scalability = run_experiment_pipeline(SCALES_SCAL, RATIOS_SCAL, "SCALABILITY", ITERATIONS_SCAL)
     
+    # 3. Log Output
     save_all_data_to_file(results_enumeration, results_scalability, DATA_FILE_PATH)
     
+    # 4. Draw Figures
     plot_academic_figures(results_enumeration, results_scalability)
     
     print("\n[Finished] All tasks completed successfully.")
