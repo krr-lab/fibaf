@@ -63,3 +63,27 @@ All numerical results and high-resolution figures will be saved to the `figures/
 The solver returns valid assignments through two standardized predicates:
 - `consistent_argument_status(Node, Value)`: The final credibility value of non-leaf nodes in the consistent assignment.
 - `leaf_argument_status(Node, Value)`: The credibility value of leaf nodes (arguments with no incoming support/attack edges).
+
+
+## Performance Evaluation Results
+
+### 1. Enumeration Mode (Finding ALL Models, Avg of 10 runs)
+Runtime unit: seconds
+
+| Scale | Ratio=0.5 | Ratio=0.6 | Ratio=0.7 |
+|:------|:----------|:----------|:----------|
+| 10    | 1.807     | 1.356     | 1.249     |
+| 15    | 7.142     | 1.496     | 1.448     |
+| 20    | 2.595     | 2.637     | 1.462     |
+
+### 2. Scalability Mode (Finding ONE Model, Avg of 5 runs)
+Runtime unit: seconds
+
+| Scale  | Ratio=0.3 | Ratio=0.5 | Ratio=0.7 |
+|:-------|:----------|:----------|:----------|
+| 100    | 11.626    | 6.309     | 4.597     |
+| 500    | 61.531    | 30.052    | 20.301    |
+| 1000   | 155.815   | 66.535    | 43.104    |
+| 5000   | 1574.557  | 419.928   | 265.909   |
+| 10000  | 4986.300  | 943.403   | 609.612   |
+
